@@ -1,0 +1,147 @@
+{
+  "name": "fim-autocomplete",
+  "displayName": "FIM Autocomplete",
+  "description": "Local ghost-text code completions powered by your own fill-in-the-middle model (llama.cpp). Free and unlimited.",
+  "version": "0.2.3",
+  "publisher": "fim-dev",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["AI", "Programming Languages"],
+  "keywords": ["autocomplete", "fim", "llama.cpp", "local", "inline completion"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fim-autocomplete",
+          "title": "FIM Autocomplete",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "fim-autocomplete": [
+        {
+          "type": "webview",
+          "id": "fimAutocomplete.sidebar",
+          "name": "FIM Autocomplete"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "fimAutocomplete.retryConnection",
+        "title": "FIM Autocomplete: Retry server connection",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "fimAutocomplete.installServer",
+        "title": "FIM Autocomplete: Install local server"
+      },
+      {
+        "command": "fimAutocomplete.startServer",
+        "title": "FIM Autocomplete: Start local server"
+      },
+      {
+        "command": "fimAutocomplete.stopServer",
+        "title": "FIM Autocomplete: Stop local server"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "fimAutocomplete.retryConnection",
+          "when": "view == fimAutocomplete.sidebar",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "FIM Autocomplete",
+      "properties": {
+        "fimAutocomplete.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable inline completions."
+        },
+        "fimAutocomplete.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080",
+          "description": "URL of the model server (managed or your own). No trailing slash."
+        },
+        "fimAutocomplete.serverBackend": {
+          "type": "string",
+          "enum": ["auto", "cpu", "cuda"],
+          "default": "auto",
+          "description": "Which server build to install. Auto = CUDA when an NVIDIA GPU is detected (Metal on macOS)."
+        },
+        "fimAutocomplete.delay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "maximum": 3000,
+          "description": "Delay in ms after you stop typing before a suggestion is requested."
+        },
+        "fimAutocomplete.maxTokens": {
+          "type": "number",
+          "default": 128,
+          "minimum": 16,
+          "maximum": 1024,
+          "description": "Maximum length of one suggestion, in tokens (~4 chars each)."
+        },
+        "fimAutocomplete.temperature": {
+          "type": "number",
+          "default": 0.2,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Sampling temperature. Lower = more deterministic suggestions."
+        },
+        "fimAutocomplete.multiline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow suggestions spanning multiple lines. Off = current line only."
+        },
+        "fimAutocomplete.maxPrefixChars": {
+          "type": "number",
+          "default": 4000,
+          "minimum": 500,
+          "maximum": 20000,
+          "description": "How much code before the cursor is sent as context (chars)."
+        },
+        "fimAutocomplete.maxSuffixChars": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 0,
+          "maximum": 20000,
+          "description": "How much code after the cursor is sent as context (chars)."
+        },
+        "fimAutocomplete.disabledLanguages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Language ids where suggestions are off, e.g. [\"markdown\", \"plaintext\"]."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node ./test/run.js",
+    "pretest": "npm run compile",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.5.0"
+  }
+}

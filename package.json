@@ -1,0 +1,13 @@
+{
+  "name": "vscplugin",
+  "version": "1.0.0",
+  "description": "",
+  "main": "model.js",
+  "scripts": {
+    "server": "node model.js server",
+    "infill": "node model.js infill",
+    "run": "node model.js run"
+  },
+  "keywords": [],
+  "type": "commonjs"
+}

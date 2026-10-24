@@ -1,0 +1,18 @@
+# Local model + server binaries (GBs, downloaded on demand — never commit)
+models/
+llama-bin/
+*.gguf
+*.bin
+
+# Dependencies and build output
+node_modules/
+extension/out/
+extension/node_modules/
+
+# Packaged extensions (build with `npm run package`)
+*.vsix
+
+# Local screenshots and notes
+*.png
+*.jpg
+*.jpeg
