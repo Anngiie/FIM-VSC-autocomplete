@@ -2,6 +2,7 @@
   "name": "vscplugin",
   "version": "1.0.0",
   "description": "",
+  "license": "MIT",
   "main": "model.js",
   "scripts": {
     "server": "node model.js server",

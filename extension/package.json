@@ -4,6 +4,7 @@
   "description": "Local ghost-text code completions powered by your own fill-in-the-middle model (llama.cpp). Free and unlimited.",
   "version": "0.2.3",
   "publisher": "fim-dev",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },
