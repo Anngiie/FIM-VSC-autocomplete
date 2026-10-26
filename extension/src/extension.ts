@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import axios from 'axios';
 import { getSettings } from './config';
 import { composeGhostColor, parseGhostColor, portFromUrl, type GhostStyle } from './platform';
 import { ServerManager, type ServerStatus } from './serverManager';
@@ -179,11 +180,10 @@ class FimProvider implements vscode.InlineCompletionItemProvider {
     const controller = new AbortController();
     const sub = token.onCancellationRequested(() => controller.abort());
     try {
-      const res = await fetch(`${s.serverUrl}/completion`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
+      //salje prefiks i sufiks upakovan,, signal sluzi da otkaze zahtev dok kucamo
+      const res = await axios.post(
+        `${s.serverUrl}/completion`,
+        {
           prompt: `${FIM_PREFIX}${prefix}${FIM_SUFFIX}${suffix}${FIM_MIDDLE}`,
           temperature: s.temperature,
           top_p: 0.95,
@@ -191,12 +191,10 @@ class FimProvider implements vscode.InlineCompletionItemProvider {
           stop: STOP,
           stream: false,
           cache_prompt: true,
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as { content?: string };
+        },
+        { signal: controller.signal }
+      );
+      const data = res.data as { content?: string };
       let text = data.content ?? '';
       if (!s.multiline) {
         text = text.split('\n')[0];
@@ -207,7 +205,7 @@ class FimProvider implements vscode.InlineCompletionItemProvider {
       notifiedDown = false;
       return [new vscode.InlineCompletionItem(text, new vscode.Range(pos, pos))];
     } catch (e) {
-      if ((e as Error).name === 'AbortError') {
+      if (axios.isCancel(e) || (e as Error).name === 'AbortError') {
         return undefined; // user kept typing — normal
       }
       output.appendLine(`completion failed: ${(e as Error).message}`);

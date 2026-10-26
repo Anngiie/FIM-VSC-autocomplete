@@ -8,9 +8,20 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["AI", "Programming Languages"],
-  "keywords": ["autocomplete", "fim", "llama.cpp", "local", "inline completion"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "autocomplete",
+    "fim",
+    "llama.cpp",
+    "local",
+    "inline completion"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -74,7 +85,11 @@
         },
         "fimAutocomplete.serverBackend": {
           "type": "string",
-          "enum": ["auto", "cpu", "cuda"],
+          "enum": [
+            "auto",
+            "cpu",
+            "cuda"
+          ],
           "default": "auto",
           "description": "Which server build to install. Auto = CUDA when an NVIDIA GPU is detected (Metal on macOS)."
         },
@@ -120,7 +135,9 @@
         },
         "fimAutocomplete.disabledLanguages": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Language ids where suggestions are off, e.g. [\"markdown\", \"plaintext\"]."
         }
@@ -136,7 +153,8 @@
     "vscode:prepublish": "npm run compile"
   },
   "dependencies": {
-    "adm-zip": "^0.5.16"
+    "adm-zip": "^0.5.16",
+    "axios": "^1.20.0"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",

@@ -10,5 +10,8 @@
     "run": "node model.js run"
   },
   "keywords": [],
-  "type": "commonjs"
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.20.0"
+  }
 }

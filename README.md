@@ -11,7 +11,7 @@ Free, private, and unlimited — no account, no per-token billing.
 |---|---|
 | `extension/` | The VS Code extension (TypeScript): inline completions, sidebar with one-click server install, ghost color settings |
 | `extension/test/` | Pure-logic tests (`npm test` inside `extension/`) |
-| `model.js` | Standalone zero-dependency script: starts `llama-server` and exposes FIM infill over HTTP (advanced path) |
+| `model.js` | Standalone script (`npm install` for axios): starts `llama-server` and exposes FIM infill over HTTP (advanced path) |
 | `.vscode/` | Launch config — press F5 to debug the extension |
 
 `models/` and `llama-bin/` are local-only (multi-GB downloads) and are never

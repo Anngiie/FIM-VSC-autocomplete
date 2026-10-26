@@ -3,6 +3,8 @@ import { createWriteStream, promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import AdmZip from 'adm-zip';
+//importujemo axios
+import axios from 'axios';
 import { MODEL_FILE, MODEL_URL, getInstallPlan, resolveCuda, type InstallPlan } from './platform';
 
 const execFileAsync = promisify(execFile);
@@ -100,8 +102,9 @@ export class ServerManager {
 
   static async isHealthy(port: number): Promise<boolean> {
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2000) });
-      return res.ok;
+      //proveramo dal server radi
+      await axios.get(`http://127.0.0.1:${port}/health`, { timeout: 2000 });
+      return true;
     } catch {
       return false;
     }
@@ -165,33 +168,25 @@ export class ServerManager {
   }
 
   private async download(url: string, dest: string, label: string): Promise<void> {
-    const res = await fetch(url);
-    if (!res.ok || !res.body) {
-      throw new Error(`Download failed (HTTP ${res.status}): ${label}`);
-    }
-    const total = Number(res.headers.get('content-length')) || null;
+    const res = await axios.get(url, { responseType: 'stream' }).catch((e: unknown): never => {
+      const status = axios.isAxiosError(e) && e.response ? e.response.status : '???';
+      throw new Error(`Download failed (HTTP ${status}): ${label}`);
+    });
+    const total = Number(res.headers['content-length']) || null;
     const out = createWriteStream(dest);
-    const reader = res.body.getReader();
+    const stream = res.data as AsyncIterable<Buffer>;
     let received = 0;
     let lastEmit = 0;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        received += value.byteLength;
-        if (!out.write(value)) {
-          await new Promise<void>((r) => out.once('drain', () => r()));
-        }
-        const now = Date.now();
-        if (now - lastEmit > 300) {
-          lastEmit = now;
-          this.emitProgress({ file: label, receivedMb: received / 1048576, totalMb: total ? total / 1048576 : null });
-        }
+    for await (const chunk of stream) {
+      received += chunk.byteLength;
+      if (!out.write(chunk)) {
+        await new Promise<void>((r) => out.once('drain', () => r()));
       }
-    } finally {
-      reader.releaseLock();
+      const now = Date.now();
+      if (now - lastEmit > 300) {
+        lastEmit = now;
+        this.emitProgress({ file: label, receivedMb: received / 1048576, totalMb: total ? total / 1048576 : null });
+      }
     }
     await new Promise<void>((resolve, reject) => {
       out.end(() => resolve());

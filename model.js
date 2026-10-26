@@ -1,5 +1,8 @@
 // model.js — run Qwen2.5-Coder-1.5B-LF-FIM-Heavy locally on GPU (llama.cpp).
-// No npm dependencies. Node 18+.
+// Requires: npm install (axios). Node 18+.
+// ubacujemo axios sa require jer ovo je običan JavaScript fajl u starom Node.js sistemu koji se zove CommonJS.
+// dokaz vidimo u package.json
+
 //
 // Usage:
 //   node model.js infill --prefix "<code before>" --suffix "<code after>" [--max-tokens 128]
@@ -13,6 +16,7 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
 
 const ROOT = __dirname;
 const SERVER_BIN = path.join(ROOT, "llama-bin", "llama-server.exe");
@@ -40,11 +44,21 @@ function baseUrl(port = CONFIG.port) {
 
 async function isServerUp(port = CONFIG.port) {
   try {
-    const res = await fetch(`${baseUrl(port)}/health`, { signal: AbortSignal.timeout(2000) });
-    return res.ok;
+    //ovde ga pitamo "dal server radi"
+    await axios.get(`${baseUrl(port)}/health`, { timeout: 2000 });
+    return true;
   } catch {
     return false;
   }
+}
+
+function formatAxiosError(e) {
+  if (e && e.response) {
+    const data = e.response.data;
+    const text = typeof data === "string" ? data : (data && typeof data.pipe === "function" ? "" : JSON.stringify(data));
+    return `${e.response.status} ${text}`.trim();
+  }
+  return e.message;
 }
 
 async function waitForServer(port, timeoutMs = 120000) {
@@ -91,48 +105,58 @@ process.on("SIGINT", () => { stopOwnedServer(); process.exit(130); });
 process.on("SIGTERM", () => { stopOwnedServer(); process.exit(143); });
 
 async function complete(prompt, { maxTokens = 512, temperature = 0.2, topP = 0.95, stop = [], stream = false, onToken = null } = {}) {
-  const res = await fetch(`${baseUrl()}/completion`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      temperature,
-      top_p: topP,
-      n_predict: maxTokens,
-      stop,
-      stream,
-      cache_prompt: true,
-    }),
-  });
-  if (!res.ok) throw new Error(`completion failed: ${res.status} ${await res.text()}`);
+  const payload = {
+    prompt,
+    temperature,
+    top_p: topP,
+    n_predict: maxTokens,
+    stop,
+    stream,
+    cache_prompt: true,
+  };
   if (!stream) {
-    const data = await res.json();
-    return data.content;
+    try {
+      //obican FIM zahtev, vraca nam res.data.contetnt
+      const res = await axios.post(`${baseUrl()}/completion`, payload);
+      return res.data.content;
+    } catch (e) {
+      throw new Error(`completion failed: ${formatAxiosError(e)}`);
+    }
   }
   // SSE stream
-  let full = "";
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    for (const line of buf.split("\n")) {
-      if (line.startsWith("data: ")) {
-        try {
-          const evt = JSON.parse(line.slice(6));
-          if (evt.content) {
-            full += evt.content;
-            onToken && onToken(evt.content);
-          }
-          if (evt.stop) return full;
-        } catch { /* partial chunk */ }
-      }
-    }
-    buf = buf.slice(buf.lastIndexOf("\n") + 1);
+  let res;
+  try {
+    res = await axios.post(`${baseUrl()}/completion`, payload, { responseType: "stream" });
+  } catch (e) {
+    throw new Error(`completion failed: ${formatAxiosError(e)}`);
   }
-  return full;
+  return new Promise((resolve, reject) => {
+    let full = "";
+    let buf = "";
+    res.data.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.content) {
+              full += evt.content;
+              onToken && onToken(evt.content);
+            }
+            if (evt.stop) {
+              res.data.destroy();
+              resolve(full);
+              return;
+            }
+          } catch { /* partial chunk */ }
+        }
+      }
+    });
+    res.data.on("end", () => resolve(full));
+    res.data.on("error", reject);
+  });
 }
 
 // PSM-style fill-in-the-middle, same order as the HumanEval-Infilling eval:
@@ -153,20 +177,18 @@ async function run(prompt, opts = {}) {
 }
 
 async function chat(userText, opts = {}) {
-  const res = await fetch(`${baseUrl()}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  try {
+    const res = await axios.post(`${baseUrl()}/v1/chat/completions`, {
       messages: [{ role: "user", content: userText }],
       temperature: opts.temperature ?? 0.2,
       top_p: opts.topP ?? 0.95,
       max_tokens: opts.maxTokens ?? 512,
       stream: false,
-    }),
-  });
-  if (!res.ok) throw new Error(`chat failed: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return data.choices[0].message.content;
+    });
+    return res.data.choices[0].message.content;
+  } catch (e) {
+    throw new Error(`chat failed: ${formatAxiosError(e)}`);
+  }
 }
 
 function getArg(flag, def = null) {
