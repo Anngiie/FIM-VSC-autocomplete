@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+//definisanaje interface-a
 export interface Settings {
   enabled: boolean;
   serverUrl: string;

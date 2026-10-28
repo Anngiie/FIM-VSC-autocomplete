@@ -16,3 +16,5 @@ extension/node_modules/
 *.png
 *.jpg
 *.jpeg
+# ...except the Marketplace icon, which must be a PNG
+!extension/media/icon.png

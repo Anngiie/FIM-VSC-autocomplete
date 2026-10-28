@@ -133,9 +133,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   <section class="card" aria-label="Suggestion settings">
     <h2>Suggestions</h2>
     <label class="row"><span>Enabled</span><input type="checkbox" id="enabled"></label>
-    <label><span>Delay <span class="val" id="delayVal"></span></span><input type="range" id="delay" min="0" max="1500" step="50"></label>
-    <label><span>Max length <span class="val" id="maxTokensVal"></span></span><input type="range" id="maxtok" min="16" max="512" step="16"></label>
-    <label><span>Temperature <span class="val" id="tempVal"></span></span><input type="range" id="temp" min="0" max="1" step="0.05"></label>
+    <label><span>Delay <span class="val" id="delayVal"></span></span><input type="range" id="delay" min="0" max="3000" step="50"></label>
+    <label><span>Max length <span class="val" id="maxTokensVal"></span></span><input type="range" id="maxtok" min="16" max="1024" step="16"></label>
+    <label><span>Temperature <span class="val" id="tempVal"></span></span><input type="range" id="temp" min="0" max="2" step="0.05"></label>
     <label class="row"><span>Multi-line</span><input type="checkbox" id="multiline"></label>
   </section>
   <section class="card" aria-label="Ghost text style">
@@ -292,7 +292,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     $('gopacity').disabled = !ghost.custom;
     postGhost();
   });
-  $('gcolor').addEventListener('input', function () { ghost.color = $('gcolor').value; postGhost(); });
+  $('gcolor').addEventListener('input', function () { ghost.color = $('gcolor').value; });
+  $('gcolor').addEventListener('change', function () { ghost.color = $('gcolor').value; postGhost(); });
   $('gopacity').addEventListener('input', function () {
     ghost.opacity = Number($('gopacity').value);
     $('gopacityVal').textContent = ghost.opacity.toFixed(2);

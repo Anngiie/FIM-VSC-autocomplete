@@ -5,6 +5,10 @@
   "version": "0.2.3",
   "publisher": "fim-dev",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Anngiie/fim-autocomplete"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },

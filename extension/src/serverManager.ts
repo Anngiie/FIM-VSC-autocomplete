@@ -24,7 +24,7 @@ export interface ServerStatus {
   managed: boolean;
   detail?: string;
   backend?: string;
-}
+} 
 
 export interface ProgressInfo {
   file: string;
@@ -103,8 +103,12 @@ export class ServerManager {
   static async isHealthy(port: number): Promise<boolean> {
     try {
       //proveramo dal server radi
-      await axios.get(`http://127.0.0.1:${port}/health`, { timeout: 2000 });
-      return true;
+      // A dev server with an SPA fallback answers unknown paths with
+      // index.html and status 200, so check the body, not just the status.
+      const res = await axios.get<{ status?: string }>(`http://127.0.0.1:${port}/health`, {
+        timeout: 2000,
+      });
+      return res.data?.status === 'ok';
     } catch {
       return false;
     }
@@ -122,9 +126,6 @@ export class ServerManager {
         detail: this.proc ? 'managed by FIM Autocomplete' : 'external server on this port',
       });
     } else {
-      if (this.proc) {
-        this.proc = null;
-      }
       this.setStatus({
         state: (await this.hasFiles()) ? 'stopped' : 'missing',
         managed: false,
@@ -152,7 +153,9 @@ export class ServerManager {
         if (plan.archiveType === 'zip') {
           new AdmZip(archive).extractAllTo(this.binDir, true);
         } else {
-          await execFileAsync('tar', ['-xzf', archive, '-C', this.binDir]);
+          // Linux and macOS release archives nest everything under a top
+          // folder (llama-<build>/); flatten it so the binary lands in binDir.
+          await execFileAsync('tar', ['-xzf', archive, '-C', this.binDir, '--strip-components=1']);
         }
         await fs.unlink(archive);
       }
@@ -215,10 +218,23 @@ export class ServerManager {
       env['LD_LIBRARY_PATH'] = this.binDir + (env['LD_LIBRARY_PATH'] ? `:${env['LD_LIBRARY_PATH']}` : '');
     }
     let stderrTail = '';
-    const proc = spawn(this.binaryPath(plan), args, { cwd: this.binDir, windowsHide: true, env });
+    const proc = spawn(this.binaryPath(plan), args, {
+      cwd: this.binDir,
+      windowsHide: true,
+      env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
     this.proc = proc;
     proc.stderr?.on('data', (d: Buffer) => {
       stderrTail = (stderrTail + d.toString()).slice(-2000);
+    });
+    // Without this listener a failed spawn (ENOENT, EACCES) is an uncaught
+    // error and the start loop waits out its full deadline.
+    proc.on('error', (e) => {
+      stderrTail = e.message;
+      if (this.proc === proc) {
+        this.proc = null;
+      }
     });
     proc.on('exit', (code) => {
       if (this.proc === proc) {
@@ -258,7 +274,7 @@ export class ServerManager {
     if (p && !p.killed) {
       p.kill();
     }
-    if (this.status.state === 'running' || this.status.state === 'starting') {
+    if (p && (this.status.state === 'running' || this.status.state === 'starting')) {
       this.setStatus({ state: 'stopped', managed: false, detail: undefined });
     }
   }

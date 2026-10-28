@@ -19,12 +19,23 @@ const path = require("path");
 const axios = require("axios");
 
 const ROOT = __dirname;
-const SERVER_BIN = path.join(ROOT, "llama-bin", "llama-server.exe");
-const DEFAULT_MODEL = path.join(ROOT, "models", "Qwen2.5-Coder-1.5B-LF-FIM-Heavy.gguf");
+const SERVER_BIN = path.join(
+  ROOT,
+  "llama-bin",
+  process.platform === "win32" ? "llama-server.exe" : "llama-server"
+);
+// The Hugging Face file is named ...-GGUF.gguf; older local copies dropped the
+// suffix. Use whichever one exists.
+const MODEL_CANDIDATES = [
+  path.join(ROOT, "models", "Qwen2.5-Coder-1.5B-LF-FIM-Heavy-GGUF.gguf"),
+  path.join(ROOT, "models", "Qwen2.5-Coder-1.5B-LF-FIM-Heavy.gguf"),
+];
+const DEFAULT_MODEL = MODEL_CANDIDATES.find((p) => fs.existsSync(p)) || MODEL_CANDIDATES[0];
+const PORT_ARG = getArg("--port");
 
 const CONFIG = {
   model: process.env.MODEL_PATH || DEFAULT_MODEL,
-  port: Number(process.env.PORT || 8080),
+  port: Number(process.env.PORT || PORT_ARG || 8080),
   ngl: Number(process.env.NGL || 99), // 99 = offload all layers to GPU
   ctx: Number(process.env.CTX || 8192),
 };
@@ -177,18 +188,55 @@ async function run(prompt, opts = {}) {
 }
 
 async function chat(userText, opts = {}) {
+  const stream = !!opts.stream;
+  let res;
   try {
-    const res = await axios.post(`${baseUrl()}/v1/chat/completions`, {
-      messages: [{ role: "user", content: userText }],
-      temperature: opts.temperature ?? 0.2,
-      top_p: opts.topP ?? 0.95,
-      max_tokens: opts.maxTokens ?? 512,
-      stream: false,
-    });
-    return res.data.choices[0].message.content;
+    res = await axios.post(
+      `${baseUrl()}/v1/chat/completions`,
+      {
+        messages: [{ role: "user", content: userText }],
+        temperature: opts.temperature ?? 0.2,
+        top_p: opts.topP ?? 0.95,
+        max_tokens: opts.maxTokens ?? 512,
+        stream,
+      },
+      stream ? { responseType: "stream" } : undefined
+    );
   } catch (e) {
     throw new Error(`chat failed: ${formatAxiosError(e)}`);
   }
+  if (!stream) {
+    return res.data.choices[0].message.content;
+  }
+  // SSE stream: each event carries choices[0].delta.content.
+  return new Promise((resolve, reject) => {
+    let full = "";
+    let buf = "";
+    res.data.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") {
+          res.data.destroy();
+          resolve(full);
+          return;
+        }
+        try {
+          const evt = JSON.parse(payload);
+          const token = evt.choices?.[0]?.delta?.content;
+          if (token) {
+            full += token;
+            opts.onToken && opts.onToken(token);
+          }
+        } catch { /* partial chunk */ }
+      }
+    });
+    res.data.on("end", () => resolve(full));
+    res.data.on("error", reject);
+  });
 }
 
 function getArg(flag, def = null) {
@@ -197,6 +245,19 @@ function getArg(flag, def = null) {
 }
 function hasFlag(flag) {
   return process.argv.includes(flag);
+}
+const VALUE_FLAGS = new Set(["--max-tokens", "--temperature", "--top-p", "--port"]);
+function positionalArgs(from) {
+  const out = [];
+  for (let i = from; i < process.argv.length; i++) {
+    const a = process.argv[i];
+    if (a.startsWith("--")) {
+      if (VALUE_FLAGS.has(a)) i++; // skip the flag's value too
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
 }
 function readMaybeFile(flag, fileFlag, def = "") {
   const file = getArg(fileFlag);
@@ -240,7 +301,7 @@ async function main() {
   }
 
   if (cmd === "run" || cmd === "chat") {
-    const prompt = process.argv.slice(3).filter((a) => !a.startsWith("--")).join(" ");
+    const prompt = positionalArgs(3).join(" ");
     if (!prompt) throw new Error(`Usage: node model.js ${cmd} "<prompt>"`);
     const owned = await ensureServer();
     try {
@@ -261,8 +322,8 @@ async function main() {
   node model.js infill --prefix "<before>" --suffix "<after>" [--max-tokens 128] [--stream]
   node model.js infill --prefix-file pre.py --suffix-file suf.py
   node model.js run "prompt" [--max-tokens 512] [--stream]
-  node model.js chat "prompt"
-  node model.js server   (keep server running; Ctrl+C to stop)
+  node model.js chat "prompt" [--stream]
+  node model.js server [--port 8080]   (keep server running; Ctrl+C to stop)
 
 Env: MODEL_PATH, PORT (default 8080), NGL (default 99 = full GPU), CTX (default 8192)`);
   process.exit(1);

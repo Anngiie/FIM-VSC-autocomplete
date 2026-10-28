@@ -116,15 +116,22 @@ async function setGhostColor(custom: boolean, color: string, opacity: number) {
   try {
     const wb = vscode.workspace.getConfiguration('workbench');
     const inlineCfg = vscode.workspace.getConfiguration('editor.inlineSuggest');
-    const current = { ...(wb.get<Record<string, string>>('colorCustomizations') || {}) };
+    // Read only the user-level value: get() merges workspace colors (e.g. from
+    // Peacock) and writing that merged object would copy them into user settings.
+    const current: Record<string, string> = {
+      ...(wb.inspect<Record<string, string>>('colorCustomizations')?.globalValue ?? {}),
+    };
     if (custom) {
       current[GHOST_COLOR_KEY] = composeGhostColor(color, opacity);
-      // Remember the current highlighting mode, then turn it off: when VS Code
-      // syntax-highlights suggestions, the flat ghost color is ignored.
-      await extContext?.globalState.update(
-        PREV_HL_STATE,
-        inlineCfg.get<boolean>('syntaxHighlightingEnabled', true)
-      );
+      // Remember the current highlighting mode the first time the custom color
+      // is enabled, then turn it off: when VS Code syntax-highlights
+      // suggestions, the flat ghost color is ignored.
+      if (!getGhostStyle().custom) {
+        await extContext?.globalState.update(
+          PREV_HL_STATE,
+          inlineCfg.get<boolean>('syntaxHighlightingEnabled', true)
+        );
+      }
       await inlineCfg.update('syntaxHighlightingEnabled', false, vscode.ConfigurationTarget.Global);
     } else {
       delete current[GHOST_COLOR_KEY];
@@ -188,7 +195,7 @@ class FimProvider implements vscode.InlineCompletionItemProvider {
           temperature: s.temperature,
           top_p: 0.95,
           n_predict: s.maxTokens,
-          stop: STOP,
+          stop: s.multiline ? STOP : [...STOP, '\n'],
           stream: false,
           cache_prompt: true,
         },
@@ -197,7 +204,7 @@ class FimProvider implements vscode.InlineCompletionItemProvider {
       const data = res.data as { content?: string };
       let text = data.content ?? '';
       if (!s.multiline) {
-        text = text.split('\n')[0];
+        text = text.split('\n')[0].replace(/\r$/, '');
       }
       if (!text) {
         return undefined;
@@ -209,8 +216,9 @@ class FimProvider implements vscode.InlineCompletionItemProvider {
         return undefined; // user kept typing — normal
       }
       output.appendLine(`completion failed: ${(e as Error).message}`);
-      if (manager && manager.getStatus().state !== 'running') {
-        await maybeNotifyDown();
+      const state = manager?.getStatus().state;
+      if (state === 'missing' || state === 'stopped' || state === 'error') {
+        void maybeNotifyDown();
       }
       return undefined;
     } finally {
@@ -265,6 +273,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
         sidebar?.pushConfig(getSettings(), getGhostStyle());
         if (e.affectsConfiguration('fimAutocomplete.serverUrl')) {
+          // The managed server is bound to the old port; stop it before the
+          // state is recomputed for the new URL.
+          stop();
           void refresh();
         }
       }
