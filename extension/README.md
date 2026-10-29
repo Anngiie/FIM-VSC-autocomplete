@@ -63,3 +63,25 @@ just point `fimAutocomplete.serverUrl` at it. The extension detects the
 external server and uses it — the Install button stays out of the way, and you
 stop that server from its own terminal (the sidebar says so).
 Any GGUF fill-in-the-middle model works.
+
+## Roadmap
+
+Planned improvements, not yet implemented — scope and order may change:
+
+- **Shared server across windows** — one `llama-server` per machine, owned by
+  the window that started it; other windows connect to it instead of spawning
+  a duplicate or reporting a false error.
+- **Duplicate-operation guard** — make install/start idempotent so a rapid
+  double-click cannot launch two downloads or two server processes.
+- **Crash recovery** — detect and clean up (or adopt) a server left running
+  after VS Code exits unexpectedly.
+- **Smaller extension package** — drop the bundled `adm-zip` and use the OS
+  `tar` (included with Windows 10+), removing its advisories and shrinking
+  the `.vsix`.
+- **Remembered install plan** — persist which build (CPU/CUDA/Metal) was
+  installed and offer a one-click reinstall when switching backends or after
+  a CUDA driver change.
+- **Verified downloads** — SHA-256 checks for the model and server archives,
+  complementing the pinned URL and exact-size check.
+- **Automated install tests and CI** — mock-server download tests plus a
+  GitHub Actions workflow running compile, test, and package on every push.
