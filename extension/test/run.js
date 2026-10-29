@@ -22,4 +22,16 @@ assert.deepEqual(p.parseGhostColor('not-a-color'), { custom: false, color: '#8b8
 const composed = p.composeGhostColor('#a1b2c3', 0.4);
 assert.deepEqual(p.parseGhostColor(composed), { custom: true, color: '#a1b2c3', opacity: 0.4 });
 
-console.log('ghost color tests passed');
+// --- URL / server location helpers ---
+assert.equal(p.isLocalUrl('http://127.0.0.1:8080'), true);
+assert.equal(p.isLocalUrl('http://localhost:8080'), true);
+assert.equal(p.isLocalUrl('http://[::1]:8080'), true);
+assert.equal(p.isLocalUrl('http://192.168.1.50:8080'), false);
+assert.equal(p.isLocalUrl('https://example.com'), false);
+assert.equal(p.isLocalUrl('not a url'), false);
+assert.equal(p.hostFromUrl('http://192.168.1.50:8080'), '192.168.1.50:8080');
+assert.equal(p.hostFromUrl('http://localhost'), 'localhost');
+assert.equal(p.portFromUrl('http://127.0.0.1:8080'), 8080);
+assert.equal(p.portFromUrl('http://localhost'), 8080);
+
+console.log('platform tests passed');

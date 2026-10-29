@@ -5,8 +5,10 @@ import { execFile } from 'node:child_process';
 export const LLAMA_BUILD = 'b11669';
 export const LLAMA_REPO = 'https://github.com/ggml-org/llama.cpp';
 export const MODEL_URL =
-  'https://huggingface.co/jolovicdev/Qwen2.5-Coder-1.5B-LF-FIM-Heavy-GGUF/resolve/main/Qwen2.5-Coder-1.5B-LF-FIM-Heavy-GGUF.gguf';
+  'https://huggingface.co/jolovicdev/Qwen2.5-Coder-1.5B-LF-FIM-Heavy-GGUF/resolve/0a080211c080a02867eac7b0cf89bde30d73d7dc/Qwen2.5-Coder-1.5B-LF-FIM-Heavy-GGUF.gguf';
 export const MODEL_FILE = 'model.gguf';
+// Size of the pinned model file; used to notice interrupted downloads.
+export const MODEL_SIZE_BYTES = 3_093_669_120;
 
 export interface DownloadFile {
   name: string;
@@ -27,6 +29,25 @@ export function portFromUrl(url: string, fallback = 8080): number {
     return Number.isFinite(p) && p > 0 ? p : fallback;
   } catch {
     return fallback;
+  }
+}
+
+// Only a server on this machine can be installed or started by the extension;
+// a serverUrl pointing elsewhere is treated as an external server.
+export function isLocalUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+export function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
   }
 }
 

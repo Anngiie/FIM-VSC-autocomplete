@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import axios from 'axios';
 import { getSettings } from './config';
-import { composeGhostColor, parseGhostColor, portFromUrl, type GhostStyle } from './platform';
+import { composeGhostColor, parseGhostColor, type GhostStyle } from './platform';
 import { ServerManager, type ServerStatus } from './serverManager';
 import { SidebarProvider } from './sidebar';
 
@@ -69,7 +69,7 @@ async function refresh() {
   if (!manager) {
     return;
   }
-  const s = await manager.refresh(portFromUrl(getSettings().serverUrl));
+  const s = await manager.refresh(getSettings().serverUrl);
   if (s.state === 'running') {
     notifiedDown = false;
   }
@@ -80,7 +80,7 @@ async function install() {
     return;
   }
   try {
-    await manager.install(portFromUrl(getSettings().serverUrl));
+    await manager.install(getSettings().serverUrl);
     notifiedDown = false;
   } catch (e) {
     output.appendLine(`install failed: ${(e as Error).message}`);
@@ -92,7 +92,7 @@ async function start() {
     return;
   }
   try {
-    await manager.start(portFromUrl(getSettings().serverUrl));
+    await manager.start(getSettings().serverUrl);
     if (manager.getStatus().state === 'running') {
       notifiedDown = false;
     }
@@ -293,7 +293,7 @@ export function activate(context: vscode.ExtensionContext) {
   paintStatusBar(manager.getStatus());
   // If the user installed the server before, start it automatically.
   void (async () => {
-    const s = await manager!.refresh(portFromUrl(getSettings().serverUrl));
+    const s = await manager!.refresh(getSettings().serverUrl);
     if (s.state === 'stopped') {
       await start();
     }

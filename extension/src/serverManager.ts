@@ -1,11 +1,22 @@
 import { ChildProcess, execFile, spawn } from 'node:child_process';
 import { createWriteStream, promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import AdmZip from 'adm-zip';
 //importujemo axios
 import axios from 'axios';
-import { MODEL_FILE, MODEL_URL, getInstallPlan, resolveCuda, type InstallPlan } from './platform';
+import {
+  MODEL_FILE,
+  MODEL_SIZE_BYTES,
+  MODEL_URL,
+  getInstallPlan,
+  hostFromUrl,
+  isLocalUrl,
+  portFromUrl,
+  resolveCuda,
+  type InstallPlan,
+} from './platform';
 
 const execFileAsync = promisify(execFile);
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -93,21 +104,27 @@ export class ServerManager {
     try {
       const plan = await this.plan();
       await fs.access(this.binaryPath(plan));
-      await fs.access(this.modelPath);
-      return true;
+      return (await this.fileSize(this.modelPath)) === MODEL_SIZE_BYTES;
     } catch {
       return false;
     }
   }
 
-  static async isHealthy(port: number): Promise<boolean> {
+  private async fileSize(p: string): Promise<number | null> {
+    try {
+      return (await fs.stat(p)).size;
+    } catch {
+      return null;
+    }
+  }
+
+  static async isHealthy(serverUrl: string): Promise<boolean> {
     try {
       //proveramo dal server radi
       // A dev server with an SPA fallback answers unknown paths with
       // index.html and status 200, so check the body, not just the status.
-      const res = await axios.get<{ status?: string }>(`http://127.0.0.1:${port}/health`, {
-        timeout: 2000,
-      });
+      const base = serverUrl.replace(/\/+$/, '');
+      const res = await axios.get<{ status?: string }>(`${base}/health`, { timeout: 2000 });
       return res.data?.status === 'ok';
     } catch {
       return false;
@@ -115,28 +132,42 @@ export class ServerManager {
   }
 
   // Recompute state from reality. Never disturbs an active operation.
-  async refresh(port: number): Promise<ServerStatus> {
+  async refresh(serverUrl: string): Promise<ServerStatus> {
     if (BUSY.includes(this.status.state)) {
       return this.status;
     }
-    if (await ServerManager.isHealthy(port)) {
+    if (await ServerManager.isHealthy(serverUrl)) {
       this.setStatus({
         state: 'running',
         managed: this.proc !== null,
-        detail: this.proc ? 'managed by FIM Autocomplete' : 'external server on this port',
+        detail: this.proc ? 'managed by FIM Autocomplete' : `external server at ${hostFromUrl(serverUrl)}`,
       });
-    } else {
+    } else if (isLocalUrl(serverUrl)) {
       this.setStatus({
         state: (await this.hasFiles()) ? 'stopped' : 'missing',
         managed: false,
         detail: undefined,
       });
+    } else {
+      this.setStatus({
+        state: 'error',
+        managed: false,
+        detail: `no server at ${hostFromUrl(serverUrl)}`,
+      });
     }
     return this.status;
   }
 
-  async install(port: number): Promise<void> {
+  async install(serverUrl: string): Promise<void> {
     if (BUSY.includes(this.status.state)) {
+      return;
+    }
+    if (!isLocalUrl(serverUrl)) {
+      this.setStatus({
+        state: 'error',
+        managed: false,
+        detail: `cannot install a server for ${hostFromUrl(serverUrl)}`,
+      });
       return;
     }
     const plan = await this.plan();
@@ -146,7 +177,12 @@ export class ServerManager {
       for (const f of plan.files) {
         await this.download(f.url, path.join(this.binDir, f.name), f.name);
       }
-      await this.download(MODEL_URL, this.modelPath, `${MODEL_FILE} (2.9 GB)`);
+      if ((await this.fileSize(this.modelPath)) !== MODEL_SIZE_BYTES) {
+        await this.download(MODEL_URL, this.modelPath, `${MODEL_FILE} (2.9 GB)`);
+        if ((await this.fileSize(this.modelPath)) !== MODEL_SIZE_BYTES) {
+          throw new Error(`${MODEL_FILE} is incomplete (expected ${MODEL_SIZE_BYTES} bytes)`);
+        }
+      }
       this.setStatus({ state: 'extracting', managed: false, backend: plan.backend });
       for (const f of plan.files) {
         const archive = path.join(this.binDir, f.name);
@@ -163,7 +199,7 @@ export class ServerManager {
         await fs.chmod(this.binaryPath(plan), 0o755);
       }
       this.setStatus({ state: 'stopped', managed: false, backend: plan.backend });
-      await this.start(port);
+      await this.start(serverUrl);
     } catch (e) {
       this.setStatus({ state: 'error', managed: false, detail: (e as Error).message });
       throw e;
@@ -171,48 +207,97 @@ export class ServerManager {
   }
 
   private async download(url: string, dest: string, label: string): Promise<void> {
-    const res = await axios.get(url, { responseType: 'stream' }).catch((e: unknown): never => {
-      const status = axios.isAxiosError(e) && e.response ? e.response.status : '???';
-      throw new Error(`Download failed (HTTP ${status}): ${label}`);
-    });
-    const total = Number(res.headers['content-length']) || null;
-    const out = createWriteStream(dest);
-    const stream = res.data as AsyncIterable<Buffer>;
+    const part = `${dest}.part`;
+    const controller = new AbortController();
+    const self = this;
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const resetTimeout = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 60000);
+    };
+
     let received = 0;
+    let total: number | null = null;
     let lastEmit = 0;
-    for await (const chunk of stream) {
-      received += chunk.byteLength;
-      if (!out.write(chunk)) {
-        await new Promise<void>((r) => out.once('drain', () => r()));
+    resetTimeout();
+    try {
+      const res = await axios.get(url, {
+        responseType: 'stream',
+        signal: controller.signal,
+      });
+      total = Number(res.headers['content-length']) || null;
+      const source = res.data as AsyncIterable<Buffer>;
+      // Count progress and reset the idle timeout as bytes arrive; pipeline
+      // handles backpressure and turns any write error into a rejection.
+      async function* withProgress() {
+        for await (const chunk of source) {
+          received += chunk.byteLength;
+          resetTimeout();
+          const now = Date.now();
+          if (now - lastEmit > 300) {
+            lastEmit = now;
+            self.emitProgress({
+              file: label,
+              receivedMb: received / 1048576,
+              totalMb: total ? total / 1048576 : null,
+            });
+          }
+          yield chunk;
+        }
       }
-      const now = Date.now();
-      if (now - lastEmit > 300) {
-        lastEmit = now;
-        this.emitProgress({ file: label, receivedMb: received / 1048576, totalMb: total ? total / 1048576 : null });
+      await pipeline(withProgress(), createWriteStream(part));
+      if (total !== null && received !== total) {
+        throw new Error(`Download incomplete (${received} of ${total} bytes): ${label}`);
       }
+      await fs.rename(part, dest);
+      this.emitProgress({
+        file: label,
+        receivedMb: received / 1048576,
+        totalMb: total ? total / 1048576 : null,
+      });
+    } catch (e) {
+      controller.abort();
+      await fs.unlink(part).catch(() => undefined);
+      if (timedOut) {
+        throw new Error(`Download timed out (no data for 60s): ${label}`);
+      }
+      if (axios.isAxiosError(e) && e.response) {
+        throw new Error(`Download failed (HTTP ${e.response.status}): ${label}`);
+      }
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'ECONNRESET' || code === 'ERR_STREAM_PREMATURE_CLOSE' || (e as Error).message === 'aborted') {
+        throw new Error(`Download interrupted: ${label}`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
-    await new Promise<void>((resolve, reject) => {
-      out.end(() => resolve());
-      out.on('error', reject);
-    });
-    this.emitProgress({ file: label, receivedMb: received / 1048576, totalMb: total ? total / 1048576 : null });
   }
 
-  async start(port: number): Promise<void> {
+  async start(serverUrl: string): Promise<void> {
     if (this.proc || BUSY.includes(this.status.state)) {
       return;
     }
-    if (await ServerManager.isHealthy(port)) {
-      this.setStatus({ state: 'running', managed: false, detail: 'external server on this port' });
+    if (await ServerManager.isHealthy(serverUrl)) {
+      this.setStatus({ state: 'running', managed: false, detail: `external server at ${hostFromUrl(serverUrl)}` });
+      return;
+    }
+    if (!isLocalUrl(serverUrl)) {
+      this.setStatus({ state: 'error', managed: false, detail: `no server at ${hostFromUrl(serverUrl)}` });
       return;
     }
     if (!(await this.hasFiles())) {
       this.setStatus({ state: 'missing', managed: false });
       return;
     }
+    const port = portFromUrl(serverUrl);
     const plan = await this.plan();
     this.setStatus({ state: 'starting', managed: false, backend: plan.backend });
-    const args = ['-m', this.modelPath, '--port', String(port), '-c', '8192', '-ngl', String(plan.ngl), '--jinja'];
+    const args = ['-m', this.modelPath, '--port', String(port), '-c', '32768', '-ngl', String(plan.ngl), '--jinja'];
     const env = { ...process.env };
     if (process.platform === 'linux' && plan.backend === 'cuda') {
       env['LD_LIBRARY_PATH'] = this.binDir + (env['LD_LIBRARY_PATH'] ? `:${env['LD_LIBRARY_PATH']}` : '');
@@ -255,7 +340,7 @@ export class ServerManager {
         this.setStatus({ state: 'error', managed: false, detail: stderrTail || 'server failed to start' });
         return;
       }
-      if (await ServerManager.isHealthy(port)) {
+      if (await ServerManager.isHealthy(serverUrl)) {
         this.setStatus({ state: 'running', managed: true, detail: `managed by FIM Autocomplete (${plan.backend})` });
         return;
       }
